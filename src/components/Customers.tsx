@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { getStoredCustomers, saveStoredCustomers } from '../lib/storage';
+import { getStoredCustomers, saveStoredCustomers, updateStoredMessageStatus } from '../lib/storage';
 import { Customer } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { MessageCircle, Plus, Trash2, Edit2, Search, MapPin, Download } from 'lucide-react';
+import { MessageCircle, Plus, Trash2, Edit2, Search, MapPin, Download, Send } from 'lucide-react';
 import { format } from 'date-fns';
 import WhatsAppModal from './WhatsAppModal';
 import MessageStatusIndicator from './MessageStatusIndicator';
 import { exportCustomersToCSV } from '../lib/exportCsv';
+import { openWhatsApp, getCustomerWhatsAppTemplate } from '../utils';
 
 export default function Customers() {
   const { user } = useAuth();
@@ -188,6 +189,43 @@ export default function Customers() {
     }
   };
 
+  const handleDirectWhatsApp = async (customer: Customer) => {
+    if (!customer.phone) {
+      alert('Nomor WhatsApp belum tersedia untuk pelanggan ini.');
+      return;
+    }
+
+    const template = getCustomerWhatsAppTemplate(customer.name, customer.city || customer.company);
+    const now = Date.now();
+
+    // 1. Update status di local state & storage
+    const updated = customers.map(c => 
+      c.id === customer.id 
+        ? { ...c, lastMessageStatus: 'sent' as const, lastMessageAt: now }
+        : c
+    );
+    setCustomers(updated);
+    if (user?.uid) {
+      saveStoredCustomers(updated, user.uid);
+      updateStoredMessageStatus('customers', customer.id, 'sent', now, user.uid);
+    }
+
+    // 2. Update status di cloud Firestore
+    try {
+      if (user?.uid && !customer.id.startsWith('cust_')) {
+        await updateDoc(doc(db, 'users', user.uid, 'customers', customer.id), {
+          lastMessageAt: now,
+          lastMessageStatus: 'sent'
+        });
+      }
+    } catch (err) {
+      console.warn('Status pesan WhatsApp tetap tersimpan aman di browser lokal:', err);
+    }
+
+    // 3. Langsung buka wa.me dengan pre-filled message template
+    openWhatsApp(customer.phone, template);
+  };
+
   return (
     <div className="space-y-6 fade-in">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -251,8 +289,20 @@ export default function Customers() {
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-sm text-[var(--text-primary)]">{customer.phone}</div>
-                    <div className="text-sm text-[var(--text-secondary)]">{customer.email || '-'}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-[var(--text-primary)]">{customer.phone || '-'}</span>
+                      {customer.phone && (
+                        <button
+                          onClick={() => handleDirectWhatsApp(customer)}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-[10px] font-semibold hover:bg-emerald-100 transition-colors cursor-pointer"
+                          title="Buka WhatsApp langsung (wa.me) dengan template pesan"
+                        >
+                          <Send size={10} />
+                          <span>wa.me</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-xs text-[var(--text-secondary)] mt-0.5">{customer.email || '-'}</div>
                   </td>
                   <td className="px-6 py-4 text-sm text-[var(--text-secondary)]">
                     {format(customer.createdAt, 'dd MMM yyyy')}
@@ -266,16 +316,28 @@ export default function Customers() {
                       userId={user?.uid}
                     />
                   </td>
-                  <td className="px-6 py-4 text-right space-x-2">
+                  <td className="px-6 py-4 text-right space-x-1.5 whitespace-nowrap">
+                    {customer.phone ? (
+                      <button 
+                        onClick={() => handleDirectWhatsApp(customer)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs shadow-xs transition-colors cursor-pointer"
+                        title="Buka WhatsApp langsung (wa.me) dengan template pesan pelanggan"
+                      >
+                        <MessageCircle size={14} className="shrink-0" />
+                        <span>Chat wa.me</span>
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-[var(--text-secondary)] italic mr-1">Tanpa nomor</span>
+                    )}
                     <button 
                       onClick={() => {
                         setSelectedContact({ id: customer.id, name: customer.name, phone: customer.phone });
                         setWaModalOpen(true);
                       }}
-                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 transition-colors cursor-pointer"
-                      title="Kirim pesan WhatsApp"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--bg-main)] text-[var(--text-secondary)] hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-[var(--border-color)] transition-colors cursor-pointer"
+                      title="Kustomisasi pesan template WhatsApp"
                     >
-                      <MessageCircle size={16} />
+                      <Send size={14} />
                     </button>
                     <button 
                       onClick={() => openEdit(customer)}

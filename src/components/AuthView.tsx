@@ -1,7 +1,21 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import GothicLIcon from './GothicLIcon';
-import { Mail, Lock, User, Eye, EyeOff, AlertCircle, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { 
+  Mail, 
+  Lock, 
+  User, 
+  Eye, 
+  EyeOff, 
+  AlertCircle, 
+  ArrowRight, 
+  CheckCircle2, 
+  Copy, 
+  Check, 
+  ExternalLink, 
+  ShieldAlert,
+  HelpCircle
+} from 'lucide-react';
 
 export default function AuthView() {
   const { signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword } = useAuth();
@@ -18,18 +32,24 @@ export default function AuthView() {
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
 
+  // Status khusus untuk unauthorized-domain
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<{
+    hostname: string;
+    copied: boolean;
+  } | null>(null);
+
   const getReadableError = (err: any): string => {
     const code = err?.code || '';
     const message = err?.message || '';
 
     if (code === 'auth/invalid-email') return 'Format alamat email tidak valid.';
-    if (code === 'auth/user-not-found') return 'Akun dengan email ini belum terdaftar.';
+    if (code === 'auth/user-not-found') return 'Akun dengan email ini belum terdaftar. Silakan pilih tab "Daftar Akun".';
     if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') return 'Email atau kata sandi yang Anda masukkan salah.';
     if (code === 'auth/email-already-in-use') return 'Email ini sudah terdaftar. Silakan pilih tab "Masuk".';
     if (code === 'auth/weak-password') return 'Kata sandi terlalu pendek. Minimal gunakan 6 karakter.';
     if (code === 'auth/popup-closed-by-user') return 'Jendela login Google ditutup sebelum selesai.';
     if (code === 'auth/operation-not-allowed') {
-      return 'Login Email/Password belum diaktifkan di Firebase Console. Anda dapat mengaktifkannya di menu Authentication > Sign-in method, atau gunakan login dengan Google.';
+      return 'Login Email/Password Firebase dialihkan ke sistem akun lokal mandiri.';
     }
     if (code === 'auth/too-many-requests') return 'Terlalu banyak percobaan gagal. Silakan tunggu beberapa saat lagi.';
     return message || 'Terjadi kesalahan saat masuk. Silakan coba lagi.';
@@ -38,6 +58,7 @@ export default function AuthView() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setUnauthorizedDomain(null);
 
     if (mode === 'reset') {
       if (!email.trim()) {
@@ -93,15 +114,36 @@ export default function AuthView() {
 
   const handleGoogleSignIn = async () => {
     setError(null);
+    setUnauthorizedDomain(null);
     try {
       setGoogleLoading(true);
       await signInWithGoogle();
     } catch (err: any) {
-      setError(getReadableError(err));
+      const code = err?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        setUnauthorizedDomain({
+          hostname: window.location.hostname || 'asia-southeast1.run.app',
+          copied: false
+        });
+      } else {
+        setError(getReadableError(err));
+      }
     } finally {
       setGoogleLoading(false);
     }
   };
+
+  const copyDomain = (domainToCopy: string) => {
+    navigator.clipboard.writeText(domainToCopy);
+    if (unauthorizedDomain) {
+      setUnauthorizedDomain({ ...unauthorizedDomain, copied: true });
+      setTimeout(() => {
+        setUnauthorizedDomain(prev => prev ? { ...prev, copied: false } : null);
+      }, 3000);
+    }
+  };
+
+  const currentHostname = typeof window !== 'undefined' ? window.location.hostname : 'asia-southeast1.run.app';
 
   return (
     <div className="min-h-screen w-full bg-[var(--bg-main)] flex items-center justify-center p-4 sm:p-6 select-none">
@@ -116,7 +158,7 @@ export default function AuthView() {
           </h1>
           <p className="text-sm text-[var(--text-secondary)] mt-1 max-w-xs mx-auto">
             {mode === 'signin' && 'Masuk untuk mengakses data pelanggan dan prospek Anda.'}
-            {mode === 'signup' && 'Daftar akun baru untuk mulai mengelola data bisnis Anda.'}
+            {mode === 'signup' && 'Daftar akun baru dengan email untuk mulai mengelola data bisnis Anda.'}
             {mode === 'reset' && 'Reset kata sandi akun CRM Studio Anda.'}
           </p>
         </div>
@@ -126,8 +168,12 @@ export default function AuthView() {
           <div className="grid grid-cols-2 p-1.5 mx-6 mt-6 bg-[var(--bg-main)] rounded-2xl border border-[var(--border-color)]">
             <button
               type="button"
-              onClick={() => { setMode('signin'); setError(null); }}
-              className={`py-2 text-sm font-semibold rounded-xl transition-all ${
+              onClick={() => { 
+                setMode('signin'); 
+                setError(null); 
+                setUnauthorizedDomain(null);
+              }}
+              className={`py-2 text-sm font-semibold rounded-xl transition-all cursor-pointer ${
                 mode === 'signin'
                   ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -137,8 +183,12 @@ export default function AuthView() {
             </button>
             <button
               type="button"
-              onClick={() => { setMode('signup'); setError(null); }}
-              className={`py-2 text-sm font-semibold rounded-xl transition-all ${
+              onClick={() => { 
+                setMode('signup'); 
+                setError(null); 
+                setUnauthorizedDomain(null);
+              }}
+              className={`py-2 text-sm font-semibold rounded-xl transition-all cursor-pointer ${
                 mode === 'signup'
                   ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -151,6 +201,64 @@ export default function AuthView() {
 
         {/* Main Form */}
         <div className="p-6">
+          {/* Panduan Spesifik Jika Terjadi Error auth/unauthorized-domain */}
+          {unauthorizedDomain && (
+            <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-900 dark:text-amber-200 text-xs space-y-3 animate-in fade-in duration-200">
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-bold text-sm text-amber-800 dark:text-amber-300">
+                    Domain Belum Terdaftar di Firebase
+                  </h4>
+                  <p className="mt-0.5 leading-relaxed text-amber-700 dark:text-amber-300/90">
+                    Firebase membatasi login Google di domain baru (<strong>{unauthorizedDomain.hostname}</strong>).
+                  </p>
+                </div>
+              </div>
+
+              {/* Solusi 1: Pakai Email & Kata Sandi (Langsung Bisa Digunakan) */}
+              <div className="p-3 bg-[var(--bg-card)] rounded-xl border border-amber-500/20 text-[var(--text-primary)] space-y-1.5">
+                <div className="font-semibold text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                  <CheckCircle2 size={14} />
+                  <span>Solusi Instan (Tanpa Setting Tambahan):</span>
+                </div>
+                <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                  Gunakan formulir <strong>Email & Kata Sandi</strong> di bawah ini. Fitur ini <strong>langsung dapat digunakan oleh siapa saja</strong> dengan email berbeda tanpa batasan domain!
+                </p>
+              </div>
+
+              {/* Solusi 2: Tambahkan Domain ke Firebase Console */}
+              <div className="pt-1 space-y-2">
+                <div className="text-[11px] font-medium text-amber-800 dark:text-amber-300">
+                  Untuk mengaktifkan login Google:
+                </div>
+                <div className="flex items-center gap-2 bg-[var(--bg-main)] p-2 rounded-lg border border-amber-500/20 font-mono text-[11px] overflow-hidden">
+                  <span className="truncate flex-1">{unauthorizedDomain.hostname}</span>
+                  <button
+                    type="button"
+                    onClick={() => copyDomain(unauthorizedDomain.hostname)}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors text-[10px] font-sans font-medium shrink-0 cursor-pointer"
+                  >
+                    {unauthorizedDomain.copied ? (
+                      <>
+                        <Check size={12} />
+                        <span>Tersalin</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={12} />
+                        <span>Salin</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[10px] text-amber-700 dark:text-amber-400/80 leading-relaxed">
+                  Buka Firebase Console &gt; Authentication &gt; Settings &gt; Authorized domains, lalu klik &quot;Add domain&quot;. Anda juga bisa menambahkan <code>asia-southeast1.run.app</code>.
+                </p>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-5 p-3.5 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-start gap-2.5">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -213,7 +321,7 @@ export default function AuthView() {
                     <button
                       type="button"
                       onClick={() => { setMode('reset'); setError(null); setResetSent(false); }}
-                      className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 hover:underline"
+                      className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
                     >
                       Lupa kata sandi?
                     </button>
@@ -232,7 +340,7 @@ export default function AuthView() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -284,7 +392,7 @@ export default function AuthView() {
               <button
                 type="button"
                 onClick={() => { setMode('signin'); setError(null); }}
-                className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 font-medium hover:underline"
+                className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 font-medium hover:underline cursor-pointer"
               >
                 ← Kembali ke Halaman Masuk
               </button>
@@ -327,11 +435,14 @@ export default function AuthView() {
             </>
           )}
 
-          {/* Privacy Note */}
-          <div className="mt-6 pt-4 border-t border-[var(--border-color)] text-center">
-            <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-              🔒 <strong>Privasi Terjamin:</strong> Data pelanggan dan prospek disimpan secara terpisah dan privat untuk masing-masing akun email.
-            </p>
+          {/* User Isolation Info Note */}
+          <div className="mt-6 pt-4 border-t border-[var(--border-color)] space-y-2">
+            <div className="flex items-start gap-2 text-[11px] text-[var(--text-secondary)] leading-relaxed">
+              <span className="shrink-0 text-emerald-600 dark:text-emerald-400 font-bold">✓</span>
+              <span>
+                <strong>Multi-Akun Mandiri:</strong> Setiap pengguna dapat mendaftarkan alamat email yang berbeda di tab <strong>Daftar Akun</strong>. Seluruh data pelanggan dan prospek tersimpan secara aman dan terpisah untuk masing-masing email.
+              </span>
+            </div>
           </div>
         </div>
       </div>

@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { getStoredLeads, saveStoredLeads } from '../lib/storage';
+import { getStoredLeads, saveStoredLeads, updateStoredMessageStatus } from '../lib/storage';
 import { Lead, LeadStatus } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { MessageCircle, Plus, Edit2, Trash2, MapPin, Download } from 'lucide-react';
+import { MessageCircle, Plus, Edit2, Trash2, MapPin, Download, Send, Phone } from 'lucide-react';
 import WhatsAppModal from './WhatsAppModal';
 import MessageStatusIndicator from './MessageStatusIndicator';
 import { exportLeadsToCSV } from '../lib/exportCsv';
+import { openWhatsApp, getLeadWhatsAppTemplate } from '../utils';
 
 const STATUS_CONFIG: Record<LeadStatus, { label: string, color: string, bg: string }> = {
   new: { label: 'Baru', color: 'text-blue-700', bg: 'bg-blue-100' },
@@ -219,6 +220,43 @@ export default function Leads() {
     }
   };
 
+  const handleDirectWhatsApp = async (lead: Lead) => {
+    if (!lead.phone) {
+      alert('Nomor WhatsApp belum tersedia untuk prospek ini.');
+      return;
+    }
+
+    const template = getLeadWhatsAppTemplate(lead.name, lead.status, lead.city || lead.company);
+    const now = Date.now();
+
+    // 1. Update status di local state & storage
+    const updated = leads.map(l => 
+      l.id === lead.id 
+        ? { ...l, lastMessageStatus: 'sent' as const, lastMessageAt: now }
+        : l
+    );
+    setLeads(updated);
+    if (user?.uid) {
+      saveStoredLeads(updated, user.uid);
+      updateStoredMessageStatus('leads', lead.id, 'sent', now, user.uid);
+    }
+
+    // 2. Update status di cloud Firestore
+    try {
+      if (user?.uid && !lead.id.startsWith('lead_')) {
+        await updateDoc(doc(db, 'users', user.uid, 'leads', lead.id), {
+          lastMessageAt: now,
+          lastMessageStatus: 'sent'
+        });
+      }
+    } catch (err) {
+      console.warn('Status pesan prospek tetap tersimpan aman di browser lokal:', err);
+    }
+
+    // 3. Langsung buka wa.me dengan pre-filled message template
+    openWhatsApp(lead.phone, template);
+  };
+
   return (
     <div className="space-y-6 fade-in h-full flex flex-col">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -272,9 +310,16 @@ export default function Leads() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)] mb-3">
-                        <MapPin size={14} className="shrink-0 text-blue-500" />
-                        <span className="truncate">{lead.city || lead.company || 'Kota belum diisi'}</span>
+                      <div className="flex items-center justify-between gap-1 text-sm text-[var(--text-secondary)] mb-2">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <MapPin size={14} className="shrink-0 text-blue-500" />
+                          <span className="truncate">{lead.city || lead.company || 'Kota belum diisi'}</span>
+                        </div>
+                        {lead.phone && (
+                          <span className="font-mono text-xs text-[var(--text-secondary)] shrink-0">
+                            {lead.phone}
+                          </span>
+                        )}
                       </div>
 
                       {lead.notes && (
@@ -283,23 +328,36 @@ export default function Leads() {
                         </p>
                       )}
                       
-                      <div className="flex items-center justify-between pt-3 border-t border-[var(--border-color)] mb-2">
+                      <div className="flex items-center justify-between gap-2 pt-3 border-t border-[var(--border-color)] mb-2">
                         {lead.phone ? (
-                          <button 
-                            onClick={() => {
-                              setSelectedContact({ id: lead.id, name: lead.name, phone: lead.phone! });
-                              setWaModalOpen(true);
-                            }}
-                            className="text-xs flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium cursor-pointer"
-                          >
-                            <MessageCircle size={14} /> WhatsApp
-                          </button>
-                        ) : <span />}
+                          <div className="flex items-center gap-1">
+                            <button 
+                              onClick={() => handleDirectWhatsApp(lead)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs shadow-xs transition-colors cursor-pointer"
+                              title="Buka WhatsApp langsung (wa.me) dengan template pesan prospek"
+                            >
+                              <MessageCircle size={13} className="shrink-0" />
+                              <span>Chat wa.me</span>
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setSelectedContact({ id: lead.id, name: lead.name, phone: lead.phone! });
+                                setWaModalOpen(true);
+                              }}
+                              className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-[var(--bg-main)] text-[var(--text-secondary)] hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-[var(--border-color)] transition-colors cursor-pointer"
+                              title="Kustomisasi template pesan WhatsApp"
+                            >
+                              <Send size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-[var(--text-secondary)] italic">Tanpa nomor</span>
+                        )}
                         
                         <select 
                           value={lead.status}
                           onChange={(e) => moveLead(lead.id, e.target.value as LeadStatus)}
-                          className="text-xs border border-[var(--border-color)] bg-[var(--bg-main)] rounded-md px-2 py-1 text-[var(--text-secondary)] cursor-pointer focus:ring-1 focus:ring-blue-500"
+                          className="text-xs border border-[var(--border-color)] bg-[var(--bg-main)] rounded-md px-2 py-1 text-[var(--text-secondary)] cursor-pointer focus:ring-1 focus:ring-blue-500 max-w-[105px]"
                         >
                           {STATUS_KEYS.map(s => (
                             <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
