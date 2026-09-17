@@ -1,7 +1,15 @@
 export type MessageStatus = 'sent' | 'read' | 'replied';
 
+export interface UserProfile {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL?: string | null;
+}
+
 export interface Customer {
   id: string;
+  userId?: string;
   name: string;
   email: string;
   phone: string;
@@ -16,6 +24,7 @@ export type LeadStatus = 'new' | 'contacted' | 'qualified' | 'won' | 'lost';
 
 export interface Lead {
   id: string;
+  userId?: string;
   customerId?: string;
   name: string;
   city?: string;

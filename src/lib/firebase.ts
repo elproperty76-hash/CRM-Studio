@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 import { 
   initializeFirestore, 
   getFirestore, 
@@ -19,6 +20,7 @@ const firebaseConfig = {
 const DATABASE_ID = "ai-studio-2cc8cde9-7331-4bc3-917c-51d919b4b4f2";
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const auth = getAuth(app);
 
 let db: Firestore;
 try {
@@ -33,4 +35,4 @@ try {
   db = getFirestore(app, DATABASE_ID);
 }
 
-export { db, app, DATABASE_ID };
+export { db, app, auth, DATABASE_ID };

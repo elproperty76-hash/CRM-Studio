@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { getStoredLeads, saveStoredLeads } from '../lib/storage';
 import { Lead, LeadStatus } from '../types';
-import { openWhatsApp } from '../utils';
-import { MessageCircle, Plus, Edit2, Trash2, MapPin } from 'lucide-react';
-import { format } from 'date-fns';
+import { useAuth } from '../context/AuthContext';
+import { MessageCircle, Plus, Edit2, Trash2, MapPin, Download } from 'lucide-react';
 import WhatsAppModal from './WhatsAppModal';
 import MessageStatusIndicator from './MessageStatusIndicator';
+import { exportLeadsToCSV } from '../lib/exportCsv';
 
 const STATUS_CONFIG: Record<LeadStatus, { label: string, color: string, bg: string }> = {
   new: { label: 'Baru', color: 'text-blue-700', bg: 'bg-blue-100' },
@@ -20,7 +20,8 @@ const STATUS_CONFIG: Record<LeadStatus, { label: string, color: string, bg: stri
 const STATUS_KEYS = Object.keys(STATUS_CONFIG) as LeadStatus[];
 
 export default function Leads() {
-  const [leads, setLeads] = useState<Lead[]>(() => getStoredLeads());
+  const { user } = useAuth();
+  const [leads, setLeads] = useState<Lead[]>(() => getStoredLeads(user?.uid));
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [waModalOpen, setWaModalOpen] = useState(false);
@@ -33,8 +34,16 @@ export default function Leads() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    if (!user) return;
+
+    // Reset/load cache khusus untuk pengguna yang sedang aktif
+    const cached = getStoredLeads(user.uid);
+    setLeads(cached);
+
+    const userColl = collection(db, 'users', user.uid, 'leads');
+    const q = query(userColl, orderBy('createdAt', 'desc'));
+
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
       const docsData = snapshot.docs.map(doc => {
         const data = doc.data();
         const rawStatus = data.status;
@@ -46,33 +55,67 @@ export default function Leads() {
 
       if (docsData.length > 0) {
         setLeads(docsData);
-        saveStoredLeads(docsData);
+        saveStoredLeads(docsData, user.uid);
       } else {
-        const local = getStoredLeads();
+        // Jika data pengguna kosong di cloud, cek cache lokal atau koleksi legacy
+        const local = getStoredLeads(user.uid);
         if (local.length > 0) {
-          local.forEach(async (l) => {
+          for (const l of local) {
             try {
               const { id, ...lData } = l;
-              await addDoc(collection(db, 'leads'), lData);
+              await addDoc(userColl, { ...lData, userId: user.uid });
             } catch (err) {
               console.warn('Gagal sinkronisasi prospek lokal ke cloud:', err);
             }
-          });
+          }
+        } else {
+          // Migrasi data legacy awal (jika ada) ke ruang akun pengguna ini
+          try {
+            const legacySnap = await getDocs(collection(db, 'leads'));
+            if (!legacySnap.empty) {
+              const migrated: Lead[] = [];
+              for (const lDoc of legacySnap.docs) {
+                const lData = lDoc.data();
+                const rawStatus = lData.status;
+                const normalizedStatus: LeadStatus = (rawStatus === 'proposal' || !STATUS_CONFIG[rawStatus as LeadStatus])
+                  ? 'qualified'
+                  : (rawStatus as LeadStatus);
+
+                const newRef = await addDoc(userColl, {
+                  ...lData,
+                  userId: user.uid,
+                  status: normalizedStatus,
+                  createdAt: lData.createdAt || Date.now()
+                });
+                migrated.push({ id: newRef.id, ...lData, status: normalizedStatus, userId: user.uid } as Lead);
+              }
+              if (migrated.length > 0) {
+                setLeads(migrated);
+                saveStoredLeads(migrated, user.uid);
+              }
+            }
+          } catch (err) {
+            console.warn('Cek migrasi legacy prospek diabaikan:', err);
+          }
         }
       }
     }, (error) => {
       console.warn('Firestore offline/error, menggunakan cache browser lokal:', error);
-      const local = getStoredLeads();
+      const local = getStoredLeads(user.uid);
       if (local.length > 0) {
         setLeads(local);
       }
     });
+
     return () => unsubscribe();
-  }, []);
+  }, [user?.uid]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
+
     const payload = {
+      userId: user.uid,
       name: formData.name.trim(),
       city: formData.city.trim(),
       company: formData.city.trim(), // backwards compatibility
@@ -85,11 +128,11 @@ export default function Leads() {
       // 1. Simpan langsung ke state & browser storage agar tidak pernah hilang
       const updated = leads.map(l => l.id === editingId ? { ...l, ...payload } : l);
       setLeads(updated);
-      saveStoredLeads(updated);
+      saveStoredLeads(updated, user.uid);
 
       try {
         if (!editingId.startsWith('lead_')) {
-          await updateDoc(doc(db, 'leads', editingId), payload);
+          await updateDoc(doc(db, 'users', user.uid, 'leads', editingId), payload);
         }
       } catch (err) {
         console.warn('Data prospek tetap aman di browser:', err);
@@ -105,16 +148,16 @@ export default function Leads() {
       // 1. Simpan langsung ke state & browser storage
       const updated = [newLead, ...leads];
       setLeads(updated);
-      saveStoredLeads(updated);
+      saveStoredLeads(updated, user.uid);
 
       try {
-        const docRef = await addDoc(collection(db, 'leads'), {
+        const docRef = await addDoc(collection(db, 'users', user.uid, 'leads'), {
           ...payload,
           createdAt: Date.now()
         });
         const finalized = updated.map(l => l.id === tempId ? { ...l, id: docRef.id } : l);
         setLeads(finalized);
-        saveStoredLeads(finalized);
+        saveStoredLeads(finalized, user.uid);
       } catch (err) {
         console.warn('Data prospek tetap aman di browser:', err);
       }
@@ -141,16 +184,16 @@ export default function Leads() {
   };
 
   const confirmDelete = async () => {
-    if (!deletingLead) return;
+    if (!deletingLead || !user) return;
     try {
       setIsDeleting(true);
       // Hapus langsung dari browser storage
       const updated = leads.filter(l => l.id !== deletingLead.id);
       setLeads(updated);
-      saveStoredLeads(updated);
+      saveStoredLeads(updated, user.uid);
 
       if (!deletingLead.id.startsWith('lead_')) {
-        await deleteDoc(doc(db, 'leads', deletingLead.id));
+        await deleteDoc(doc(db, 'users', user.uid, 'leads', deletingLead.id));
       }
       setDeletingLead(null);
     } catch (error) {
@@ -161,14 +204,15 @@ export default function Leads() {
   };
 
   const moveLead = async (id: string, newStatus: LeadStatus) => {
+    if (!user) return;
     // 1. Update langsung di browser storage
     const updated = leads.map(l => l.id === id ? { ...l, status: newStatus } : l);
     setLeads(updated);
-    saveStoredLeads(updated);
+    saveStoredLeads(updated, user.uid);
 
     try {
       if (!id.startsWith('lead_')) {
-        await updateDoc(doc(db, 'leads', id), { status: newStatus });
+        await updateDoc(doc(db, 'users', user.uid, 'leads', id), { status: newStatus });
       }
     } catch (err) {
       console.warn('Gagal update status prospek di cloud:', err);
@@ -182,13 +226,24 @@ export default function Leads() {
           <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">Pelacakan Prospek (Leads)</h2>
           <p className="text-[var(--text-secondary)]">Kelola prospek di setiap tahapan penjualan.</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-xl hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium shadow-sm"
-        >
-          <Plus size={18} />
-          Tambah Prospek
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => exportLeadsToCSV(leads)}
+            disabled={leads.length === 0}
+            className="bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] px-3.5 py-2 rounded-xl transition-colors flex items-center gap-2 font-medium shadow-sm cursor-pointer disabled:opacity-50"
+            title="Ekspor daftar prospek ke file CSV"
+          >
+            <Download size={16} className="text-purple-600" />
+            <span className="hidden sm:inline">Export</span> CSV
+          </button>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-xl hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium shadow-sm cursor-pointer"
+          >
+            <Plus size={18} />
+            Tambah Prospek
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-x-auto pb-4 snap-x snap-mandatory scroll-smooth">
@@ -212,8 +267,8 @@ export default function Leads() {
                       <div className="flex justify-between items-start mb-2">
                         <h4 className="font-semibold text-[var(--text-primary)] leading-tight">{lead.name}</h4>
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                          <button onClick={() => openEdit(lead)} className="p-1 text-[var(--text-secondary)] hover:text-blue-600 dark:hover:text-blue-400 transition-colors"><Edit2 size={14} /></button>
-                          <button onClick={() => setDeletingLead({ id: lead.id, name: lead.name })} className="p-1 text-[var(--text-secondary)] hover:text-red-600 dark:hover:text-red-400 transition-colors" title="Hapus prospek"><Trash2 size={14} /></button>
+                          <button onClick={() => openEdit(lead)} className="p-1 text-[var(--text-secondary)] hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer" title="Edit prospek"><Edit2 size={14} /></button>
+                          <button onClick={() => setDeletingLead({ id: lead.id, name: lead.name })} className="p-1 text-[var(--text-secondary)] hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer" title="Hapus prospek"><Trash2 size={14} /></button>
                         </div>
                       </div>
 
@@ -235,7 +290,7 @@ export default function Leads() {
                               setSelectedContact({ id: lead.id, name: lead.name, phone: lead.phone! });
                               setWaModalOpen(true);
                             }}
-                            className="text-xs flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium"
+                            className="text-xs flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium cursor-pointer"
                           >
                             <MessageCircle size={14} /> WhatsApp
                           </button>
@@ -251,7 +306,13 @@ export default function Leads() {
                           ))}
                         </select>
                       </div>
-                      <MessageStatusIndicator status={lead.lastMessageStatus} date={lead.lastMessageAt} collectionName="leads" documentId={lead.id} />
+                      <MessageStatusIndicator 
+                        status={lead.lastMessageStatus} 
+                        date={lead.lastMessageAt} 
+                        collectionName="leads" 
+                        documentId={lead.id}
+                        userId={user?.uid}
+                      />
                     </div>
                   ))}
                   {columnLeads.length === 0 && (
@@ -298,10 +359,10 @@ export default function Leads() {
                 <textarea rows={3} placeholder="Catatan tambahan mengenai prospek..." value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none placeholder:text-[var(--text-secondary)]" />
               </div>
               <div className="pt-4 flex gap-3 justify-end">
-                <button type="button" onClick={closeModal} className="px-4 py-2 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-xl font-medium transition-colors">
+                <button type="button" onClick={closeModal} className="px-4 py-2 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-xl font-medium transition-colors cursor-pointer">
                   Batal
                 </button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">
+                <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors cursor-pointer">
                   Simpan
                 </button>
               </div>
@@ -318,6 +379,7 @@ export default function Leads() {
           recipientPhone={selectedContact.phone}
           collectionName="leads"
           documentId={selectedContact.id}
+          userId={user?.uid}
         />
       )}
 
@@ -336,7 +398,7 @@ export default function Leads() {
                 type="button"
                 disabled={isDeleting}
                 onClick={() => setDeletingLead(null)}
-                className="flex-1 px-4 py-2 border border-[var(--border-color)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-xl font-medium transition-colors"
+                className="flex-1 px-4 py-2 border border-[var(--border-color)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-xl font-medium transition-colors cursor-pointer"
               >
                 Batal
               </button>
@@ -344,7 +406,7 @@ export default function Leads() {
                 type="button"
                 disabled={isDeleting}
                 onClick={confirmDelete}
-                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {isDeleting ? 'Menghapus...' : 'Hapus'}
               </button>

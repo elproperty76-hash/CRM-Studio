@@ -10,9 +10,10 @@ interface Props {
   date?: number;
   collectionName: string;
   documentId: string;
+  userId?: string;
 }
 
-export default function MessageStatusIndicator({ status, date, collectionName, documentId }: Props) {
+export default function MessageStatusIndicator({ status, date, collectionName, documentId, userId }: Props) {
   if (!status || !date) return <span className="text-xs text-[var(--text-secondary)]">Belum dihubungi</span>;
 
   const toggleStatus = async (e: React.MouseEvent) => {
@@ -21,11 +22,15 @@ export default function MessageStatusIndicator({ status, date, collectionName, d
     const nextStatus = status === 'sent' ? 'read' : status === 'read' ? 'replied' : 'sent';
     
     if (collectionName === 'customers' || collectionName === 'leads') {
-      updateStoredMessageStatus(collectionName, documentId, nextStatus, date);
+      updateStoredMessageStatus(collectionName, documentId, nextStatus, date, userId);
     }
 
     try {
-      await updateDoc(doc(db, collectionName, documentId), {
+      const docRef = userId
+        ? doc(db, 'users', userId, collectionName, documentId)
+        : doc(db, collectionName, documentId);
+
+      await updateDoc(docRef, {
         lastMessageStatus: nextStatus
       });
     } catch (error) {

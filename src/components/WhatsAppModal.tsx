@@ -12,6 +12,7 @@ interface Props {
   recipientPhone: string;
   collectionName?: 'customers' | 'leads';
   documentId?: string;
+  userId?: string;
 }
 
 const TEMPLATES = [
@@ -32,7 +33,7 @@ const TEMPLATES = [
   },
 ];
 
-export default function WhatsAppModal({ isOpen, onClose, recipientName, recipientPhone, collectionName, documentId }: Props) {
+export default function WhatsAppModal({ isOpen, onClose, recipientName, recipientPhone, collectionName, documentId, userId }: Props) {
   const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATES[0].id);
   const [message, setMessage] = useState('');
 
@@ -57,9 +58,13 @@ export default function WhatsAppModal({ isOpen, onClose, recipientName, recipien
     }
     
     if (collectionName && documentId) {
-      updateStoredMessageStatus(collectionName, documentId, 'sent', Date.now());
+      updateStoredMessageStatus(collectionName, documentId, 'sent', Date.now(), userId);
       try {
-        await updateDoc(doc(db, collectionName, documentId), {
+        const docRef = userId 
+          ? doc(db, 'users', userId, collectionName, documentId)
+          : doc(db, collectionName, documentId);
+
+        await updateDoc(docRef, {
           lastMessageAt: Date.now(),
           lastMessageStatus: 'sent'
         });

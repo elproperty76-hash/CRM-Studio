@@ -6,27 +6,45 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
-import { Users, Target, TrendingUp, CheckCircle, Download } from 'lucide-react';
+import { Users, Target, TrendingUp, CheckCircle, Download, FileSpreadsheet, X, FileText, Check } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 
 import { getStoredCustomers, getStoredLeads } from '../lib/storage';
+import { useAuth } from '../context/AuthContext';
+import { 
+  exportCustomersToCSV, 
+  exportLeadsToCSV, 
+  exportUnifiedBackupToCSV, 
+  exportBothCSVFiles 
+} from '../lib/exportCsv';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#64748b'];
 
 export default function Dashboard() {
-  const [customers, setCustomers] = useState<Customer[]>(() => getStoredCustomers());
-  const [leads, setLeads] = useState<Lead[]>(() => getStoredLeads());
+  const { user } = useAuth();
+  const [customers, setCustomers] = useState<Customer[]>(() => getStoredCustomers(user?.uid));
+  const [leads, setLeads] = useState<Lead[]>(() => getStoredLeads(user?.uid));
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(() => {
-    const initCustomers = getStoredCustomers();
-    const initLeads = getStoredLeads();
+    const initCustomers = getStoredCustomers(user?.uid);
+    const initLeads = getStoredLeads(user?.uid);
     return initCustomers.length === 0 && initLeads.length === 0;
   });
 
   useEffect(() => {
-    const unsubCustomers = onSnapshot(query(collection(db, 'customers'), orderBy('createdAt', 'desc')), (snapshot) => {
+    if (!user) return;
+
+    setCustomers(getStoredCustomers(user.uid));
+    setLeads(getStoredLeads(user.uid));
+
+    const userCustColl = collection(db, 'users', user.uid, 'customers');
+    const userLeadColl = collection(db, 'users', user.uid, 'leads');
+
+    const unsubCustomers = onSnapshot(query(userCustColl, orderBy('createdAt', 'desc')), (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
       if (docs.length > 0) {
         setCustomers(docs);
@@ -37,7 +55,7 @@ export default function Dashboard() {
       setLoading(false);
     });
 
-    const unsubLeads = onSnapshot(query(collection(db, 'leads'), orderBy('createdAt', 'desc')), (snapshot) => {
+    const unsubLeads = onSnapshot(query(userLeadColl, orderBy('createdAt', 'desc')), (snapshot) => {
       const data = snapshot.docs.map(doc => {
         const d = doc.data();
         return {
@@ -59,7 +77,7 @@ export default function Dashboard() {
       unsubCustomers();
       unsubLeads();
     };
-  }, []);
+  }, [user?.uid]);
 
   const exportToExcel = () => {
     // Prepare Leads Data
@@ -166,17 +184,25 @@ export default function Dashboard() {
           <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">Dashboard Analitik</h2>
           <p className="text-[var(--text-secondary)]">Ringkasan performa penjualan dan pelanggan Anda.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center flex-wrap gap-2">
+          <button 
+            onClick={() => setIsBackupModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors font-medium shadow-sm cursor-pointer"
+            title="Cadangkan data ke format CSV"
+          >
+            <Download size={18} className="text-blue-600 dark:text-blue-400" />
+            Backup CSV
+          </button>
           <button 
             onClick={exportToExcel}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl hover:bg-[var(--bg-hover)] transition-colors font-medium shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl hover:bg-[var(--bg-hover)] transition-colors font-medium shadow-sm cursor-pointer"
           >
             <Download size={18} className="text-green-600" />
             Excel
           </button>
           <button 
             onClick={exportToPDF}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl hover:bg-[var(--bg-hover)] transition-colors font-medium shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl hover:bg-[var(--bg-hover)] transition-colors font-medium shadow-sm cursor-pointer"
           >
             <Download size={18} className="text-red-600" />
             PDF
@@ -240,6 +266,143 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Modal Backup CSV */}
+      {isBackupModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 transition-opacity animate-in fade-in duration-200">
+          <div className="bg-[var(--bg-card)] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-[var(--border-color)] animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">
+                  <FileSpreadsheet size={22} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[var(--text-primary)]">Cadangkan Data (Backup CSV)</h3>
+                  <p className="text-xs text-[var(--text-secondary)]">Ekspor data ke format CSV yang kompatibel dengan Excel & spreadsheet</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsBackupModalOpen(false);
+                  setDownloadSuccess(null);
+                }}
+                className="p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Ringkasan Data Saat Ini */}
+              <div className="p-3 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)] flex items-center justify-between text-xs">
+                <span className="text-[var(--text-secondary)]">Data siap dicadangkan:</span>
+                <div className="flex gap-2 font-medium">
+                  <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                    {customers.length} Pelanggan
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
+                    {leads.length} Prospek
+                  </span>
+                </div>
+              </div>
+
+              {downloadSuccess && (
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 animate-in fade-in">
+                  <Check size={16} className="shrink-0" />
+                  <span>{downloadSuccess}</span>
+                </div>
+              )}
+
+              {/* Opsi Unduhan Backup */}
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => {
+                    exportUnifiedBackupToCSV(customers, leads);
+                    setDownloadSuccess('File CSV backup lengkap berhasil diunduh.');
+                  }}
+                  className="w-full p-3.5 rounded-xl border border-[var(--border-color)] hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-blue-900/20 text-left transition-all flex items-start gap-3.5 group cursor-pointer"
+                >
+                  <div className="p-2 rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400 group-hover:scale-105 transition-transform shrink-0">
+                    <Download size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[var(--text-primary)] group-hover:text-blue-600 dark:group-hover:text-blue-400 flex items-center justify-between">
+                      <span>Backup Lengkap (1 File CSV)</span>
+                      <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">Rekomendasi</span>
+                    </div>
+                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                      Menyatukan seluruh data Pelanggan & Prospek dalam 1 dokumen terpadu untuk arsip lengkap.
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    exportBothCSVFiles(customers, leads);
+                    setDownloadSuccess('2 file CSV (Pelanggan & Prospek) berhasil diunduh.');
+                  }}
+                  className="w-full p-3.5 rounded-xl border border-[var(--border-color)] hover:border-purple-500 hover:bg-purple-50/50 dark:hover:bg-purple-900/20 text-left transition-all flex items-start gap-3.5 group cursor-pointer"
+                >
+                  <div className="p-2 rounded-lg bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400 group-hover:scale-105 transition-transform shrink-0">
+                    <FileText size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-[var(--text-primary)] group-hover:text-purple-600 dark:group-hover:text-purple-400">
+                      Backup 2 File CSV Terpisah
+                    </div>
+                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                      Mengunduh otomatis 1 file CSV Pelanggan dan 1 file CSV Prospek secara bersamaan.
+                    </p>
+                  </div>
+                </button>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      exportCustomersToCSV(customers);
+                      setDownloadSuccess('File CSV Pelanggan berhasil diunduh.');
+                    }}
+                    className="p-3 rounded-xl border border-[var(--border-color)] hover:border-blue-400 hover:bg-[var(--bg-hover)] text-left transition-all flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Download size={15} className="text-blue-600 shrink-0" />
+                    <div className="truncate">
+                      <div className="text-xs font-semibold text-[var(--text-primary)]">CSV Pelanggan Saja</div>
+                      <div className="text-[11px] text-[var(--text-secondary)]">{customers.length} kontak pelanggan</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      exportLeadsToCSV(leads);
+                      setDownloadSuccess('File CSV Prospek berhasil diunduh.');
+                    }}
+                    className="p-3 rounded-xl border border-[var(--border-color)] hover:border-blue-400 hover:bg-[var(--bg-hover)] text-left transition-all flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Download size={15} className="text-purple-600 shrink-0" />
+                    <div className="truncate">
+                      <div className="text-xs font-semibold text-[var(--text-primary)]">CSV Prospek Saja</div>
+                      <div className="text-[11px] text-[var(--text-secondary)]">{leads.length} data prospek</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBackupModalOpen(false);
+                    setDownloadSuccess(null);
+                  }}
+                  className="px-4 py-2 bg-[var(--bg-main)] hover:bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl text-sm font-medium transition-colors cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
