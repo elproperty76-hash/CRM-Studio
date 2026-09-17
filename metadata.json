@@ -1,0 +1,6 @@
+{
+  "name": "CRM & Lead Tracker",
+  "description": "Customer relationship management and lead tracking application with WhatsApp integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

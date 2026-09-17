@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "Data pelanggan CRM yang tersimpan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "city": { "type": "string" },
+        "company": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "lastMessageAt": { "type": "number" },
+        "lastMessageStatus": { "type": "string" }
+      },
+      "required": ["name", "phone", "createdAt"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "Data prospek penjualan CRM yang tersimpan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "name": { "type": "string" },
+        "city": { "type": "string" },
+        "company": { "type": "string" },
+        "value": { "type": "number" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "lastMessageAt": { "type": "number" },
+        "lastMessageStatus": { "type": "string" }
+      },
+      "required": ["name", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Koleksi data pelanggan CRM"
+    },
+    "/leads/{leadId}": {
+      "schema": { "$ref": "#/entities/Lead" },
+      "description": "Koleksi data prospek penjualan CRM"
+    }
+  }
+}
